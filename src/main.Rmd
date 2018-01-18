@@ -1,0 +1,672 @@
+---
+title: "Hidden markov model for CG density"
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    fig_caption: true
+    keep_tex: true
+  html_document:
+    df_print: paged
+    toc: yes
+---
+
+\newcommand{\given}{\mathbin{\vert}}
+\newcommand{\argmax}{{\mathrm{argmax}}}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      tidy = F,
+                      tidy.opts=list(width.cutoff=40))
+read_wrap <-function(fname,wid = 100){
+  s= readLines(fname)
+  s = gsub('\t','  ',s)
+  
+  # sout = 
+  idx = nchar(s) > wid
+  
+  slst <- as.list(s)
+  # browser()
+  slst[idx]<-lapply(slst[idx],function(x)strwrap(x,wid))
+  unlist(slst)
+  
+}
+Rapid =  F
+```
+
+# Introduction
+
+Most of the code was written in Python2.7 with dependencies documented in "`r fname = 'requirements.txt';fname`"
+```{r, code = readLines(fname),eval = F}
+### Blank
+```
+
+## Code organisation
+
+| Filename     | Functionality |
+| -------------|:------------------------------------------------------------- | 
+| util.py      | Defining the model as Var_hmm() class. Various I/O utilities   | 
+| util_genome.py  | Reading fasta and calculating CG content      |
+| forward.py   | Forward-backward algorithm were added to Var_hmm() class, along with Viterbi algorithm     | 
+| bulk.py      | Defining chains() class that allow bulk forwarding chains      | 
+
+# Question 1: File format 
+
+## Model: \*.hmm file
+The model file *.hmm is defined with 3 sections: 
+
+1. TRANSITION: K*K transition matrix (float)
+
+1. INTITIAL : 1*K initial distribution for internal state (float)
+
+1. EMISSION : K*L emission probability of L states given an internal state 
+
+Filename:"`r fname = 'Q3.hmm';fname`"
+
+```{r, code = read_wrap(fname),eval = F}
+# readLines('Q3.hmm')
+### Blank
+```
+
+## State chains: \*.echain file
+
+A file in which each tab-delimited line is read as an emission chain, indexed from 0.
+
+Filename:"`r fname = 'test.echain';fname`"
+
+```{r, code = read_wrap(fname),eval = F}
+# readLines('Q3.hmm')
+### Blank
+```
+
+## I/O utility
+
+
+1. To create a hmm instance from model file, simply do `h1 = util.Var_hmm.read_model(fname)`
+
+1. To read a chain file, do `echain = util.read_chain(fname, dtype = 'int')`
+
+# Question 2: MLE estimator for transition matrix from an hidden state chain (See \ref{test__mle_chain2transition.py})
+
+
+**Run-log:**
+
+Filename:"`r fname = 'test__mle_chain2transition.py';fname`" 
+
+```{r, engine = 'python', code = readLines(fname),echo = F}
+#```{python, code = readLines(fname)}
+### Blank
+```
+
+
+
+# Question 3: Sampling emissions from a hidden markov model (See \ref{test__sampling.py})
+
+This functionality is providied by "`util.Var_hmm.run_for`" 
+
+**Run-log:**
+
+Filename:"`r fname = 'test__sampling.py';fname`" 
+
+`r a=system('python test__sampling.py',intern = T);a`
+```{r, engine = 'python', code = readLines(fname),eval = F,echo = F}
+#```{python, code = readLines(fname)}
+### Blank
+```
+
+
+<!-- <img src="test__sampling.pdf" alt="some text"  width="1600" height="2000" /> -->
+
+![\label{fig:sampling} Trajectory over 115 time-steps sampled from "Q3.hmm".](test__sampling.pdf)
+
+In order to verify that the fuction is behaving as expected, I also verified the distribution of the state is approaching stationary. 
+
+(TBA)
+
+# Question 4: Calculate $P(Y_0^N \given model )$ with forward algorithm (See \ref{test__forward.py})
+
+More detailed notes for deduction and implementation can be found \ref{note:forward}
+
+Filename:"`r fname = 'test__forward.py';fname`"
+
+```{python , code=read_wrap(fname),eval = T,echo = F}
+### Blank
+```
+
+# Question 5: Analysing GC content of some real sequence (See \ref{Q5_clean.py})
+
+Chromosome III of *Saccharomyces cerevisiae* was downloaded from ensemble ([link](ftp://ftp.ensembl.org/pub/release-91/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.chromosome.III.fa.gz)). The file is preprocessed with "`util_genome`".
+
+**Run log:**
+
+Filename:"`r fname = 'Q5_clean.py';fname`"
+
+```{python, code = read_wrap(fname),eval = !Rapid,echo = F}
+### Blank
+```
+
+I calculated fraction of GC-bases within 3166 non-overlapping windows over this 316620bp sequence (figure \ref{fig:Q5_1}). After inspecting the distribution of GC-density, I chose to bin those densities with lowly-occupied values as border of bins. Two binning schemes were proposed, and log-likelihood under these binning schemes were evaluated to be -4618 and -4389.
+
+![\label{fig:Q5_1} Overview of CG-density in Chromosome III of *S. cerevisiae*](Q5_fig1.pdf)
+
+![\label{fig:Q5_2} Distribution of states in encoded GC-density sequence](Q5_fig2.pdf)
+
+# Question 6: Baum-Welch Learning Algorithm
+
+More detailed notes for deduction and implementation can be found \ref{note:backward-BW}
+
+
+Baum-Welch algorithm is an expectectation-maximization routine that iterates between:
+1. Expectation: 
+Finding the form of log-likelihood of the observation using current estimate of model parameter
+2. Maximization:
+Update the model parameter with the parameter set that maximises this log-likelihood function.
+
+Here we will set the algorithm to terminate once the loglikelihood does not change significantly anymore.
+
+$$
+L = \log{P(Y_0^N \given  model)} \\
+\Delta L < threshold
+$$
+
+Although BW is an EM algorithm, its E-M steps are not completely separated from each other. In practice, BW provides a MLE for the model parameter, which is directly dervied from the current estimate of model parameter, which can be iteratively substituted until convergence. Recall the model is defined by $(\mu(s_i),A_{ij},b_{s_i}(v_n))$, the BW-MLE takes the form:
+
+$$
+\begin{aligned}
+    \hat{\mu}(s_i)    &=  \gamma_0(s_i) \\
+    \hat{A}_{ij}      &= \frac{E( n_{ij} \given Y ) }{ E( n_i \given Y ) } \\
+    \hat{b}_{s_i}(Y = v_k) &= \frac{ \sum_{ \{n:\ Y_n = v_k \} }{\gamma_n(s_i)} }{ \sum_n{\gamma_n(s_i)} }
+\end{aligned}
+$$
+
+where $n_{ij}$ is the random variable denoting the number of $i\rightarrow j$ transition in a hidden state chain, with their conitional expectation being:
+
+$$
+\begin{aligned}
+    E(n_{ij} \given Y ) &= \sum_{m=0}^{N-1}{P(X_m = s_i, X_{m+1} = s_j \given Y_0^N )} \\
+                        &= \sum_{m=0}^{N-1}{\xi_m(s_i,s_j)} \\
+\end{aligned}
+$$
+
+
+
+And $\gamma_m(s_i)$ is essentially $\xi_m(s_i,s_j)$ marginalised over the $s_j$, which reads:
+$$
+\gamma_m(s_i) = \sum_j{\xi_m(s_i,s_j)}
+$$
+
+## Result (See \ref{Q6.py})
+
+**Run log**
+
+Filename:"`r fname = 'Q6.py';fname`"
+
+```{python, code = read_wrap(fname),eval = !Rapid, echo = F, results='hide'}
+### Blank
+```
+
+
+I first verified that the forward and backward variables scaled appropriately (figure \ref{fig:Q6_FBQC}). After that, BW-procedure are repeated until the difference in log-likelihood between updates is smaller than 0.005. Supericially, binning scheme 1 seems to admits a model that better explains the data. The log-likelihood under the new model are -3926 and -4149 respectively (figure \ref{fig:Q6_BWQC}).
+
+
+![\label{fig:Q6_FBQC} Quality-controlling forward-backward algorithim:$d_m$ is well approximated by $c_{m+1}$](Q6_FBQC.pdf)
+
+![\label{fig:Q6_BWQC} Quality-control for BW algorithm: Saturation of log-likelihood ](Q6_BWQC.pdf)
+
+
+# Question 7: Viterbi algorithm for finding maximally likely sequence $\hat{X_0^N}$
+
+More detailed notes for deduction and implementation can be found \ref{note:viterbi}
+
+
+Although Baum-Welch algorithm can be applied to refine the model iteratively, it is impossible to infer the maximally likely hidden-state sequence using the temporary variables invovled, because the interwined dependency precluded simple combination of individual maximally likely hidden states. Luckily Viterbi algorithm offers an alternative MLE to infer hidden sequence given emission sequence, namely finding
+
+
+$$
+\hat{X_0^N} = \underset{X_0^N}{\argmax}[ P(X_0^N \given Y_0^N , \{ \mu(s_i),A_{ij},b_{s_i}(v_n)  \}  ) ]
+$$
+
+But notice $P(Y_0^N \given \{ \mu(s_i),A_{ij},b_{s_i}(v_n)  \}  )$ is a constant, which means we only need to focus on 
+$$
+\hat{X_0^N} = \underset{X_0^N}{\argmax}[ P(X_0^N , Y_0^N  ) ]
+$$
+
+## Result (See \ref{Q7.py})
+
+**Run log**
+Filename:"`r fname = 'Q7.py';fname`"
+
+```{python, code = read_wrap(fname),eval = !Rapid,echo = F,results='hide'}
+### Blank
+```
+
+
+![\label{fig:Q7_MLE} Maximaly likely sequences as inferred from the models refined with BW](Q7.pdf)
+
+It can be seen that neither of the two models captures the local fluctuation of the CG density. Furthermore, the scheme 2 tends to predict longer contiguous segments than scheme 1, which will be a good feature if we are only interesting in that granularity. Visually speaking, the model is trying to segment the genome into CG-rich and CG-depleted regions. To evaluate its relevance to CpG island, we compared this annotation to that of UCSC Genome browser (figure \ref{fig:Q7_UCSC}). The called hidden states seem to correspond to gene regions, which means the model can be modified to predict the gene position. 
+
+The model can be improved in various ways, via chaning the emission model, the state space, and the learning algorithm:
+
+1. The emission model. It is conceivable that CG density is a continous rather than discrete variable. Although a discrete binning scheme is straight-forward to implement and to test, a continous emission model based on gaussian distribution should improve the model's likelihood function to be more robust to noise. 
+
+1. The state space:
+The size of the state space may be increased to use more latent variables to improve the flexibility of the model. However such practice must be carefully quality-controlled to avoid overfitting.
+
+1. The learning algorihtm:
+Currently the model is refined using Baum-Welch algorithm, which may be replaced by Viterbi learning. Furthermore, with the assumption that state space corresponds to existence/absence of genes, this information may be further integrated to guide the fitting of parameters, using general purpose algorithm like gradient-descent. However, introducing a model on the hidden state will increase the complexity of the likelihood function and hence the algorithm, which means maybe leave such information on the emission layer could be a simpler alternative. 
+
+![\label{fig:Q7_UCSC} 0-50Kbp of ChrII viewed on UCSG genome browser](yeast_ucsc_50K.png)
+
+
+
+# Appendix
+
+## Deductions
+
+
+```{bash,eval = F}
+jupyter nbconvert --to markdown forward_algo.ipynb --output Q5
+jupyter nbconvert --to markdown Q6-Backward_algo.ipynb --output Q6
+jupyter nbconvert --to markdown Q7-Viterbi_algorithm.ipynb --output Q7
+```
+### Question 5:Forward algorithm \label{note:forward}
+
+The idea of forward algorithm is to exploit the hierarchy within the collection of all possible hidden chains using dynamic programming, so as to reduce the time complexity from $O(J^N)$ to $O(NJ^2)$, with $J$ the cardinality of hidden states set, and $N$ the length of the chain.
+
+#### Naive forward algorithm
+The forward algorithm aims to calculate the likelihood of an observation chain $Y_0^N$ given the model $(\mu(s_i),A_{ij},b_{s_i}(Y))$ as:
+
+$$
+P(Y_0^N) = \sum_i{P(Y_0^N,x_N=s_i)} 
+$$
+
+
+Let 
+$$
+\begin{aligned}
+    \alpha_N(s_i) &= P(Y_0^N,x_N=s_i) \\
+    P(Y_0^N) &= \sum_i{\alpha_N(s_i)}
+\end{aligned}
+$$
+
+All that's left is to construct $\alpha_N(s_i)$ recursively from $\alpha_0(s_i)$, since 
+
+$$
+\begin{aligned}
+    \alpha_0(s_i) &= P(Y_0^0,x_0 = s_i ) \\
+                  &= P(Y_0 | x_0 = s_i) P(x_0 = s_i) \\
+                  &= b_i( Y_0 ) \mu(s_i)
+\end{aligned}
+$$
+
+For convenienve we also define 
+$$
+\nu(Y_0) = \sum_{i} b_i( Y_0 ) \mu(s_i) = P(Y_0)
+$$
+
+
+The recursion formula can be obtained using the Markov assumption (conditional independency) to be:
+
+$$
+\begin{aligned}
+    \alpha_{n + 1}(s_j) &= b_j( Y_{n + 1} )  \sum_i {[A_{ij} \alpha_n (s_i) ]}
+\end{aligned}
+$$
+
+
+
+
+#### Rescaled forward algorithm
+The naive implementation, however, suffers from numeric underflow,  because $A_{ij} < 1, b_{s_i}(Y) < 1$. To avoid that, the $\alpha_N(s_i)$ is normalised so that $\sum_i{\hat{\alpha}_N(s_i)}=1$, which implies:
+
+$$
+\begin{aligned}
+    \hat{\alpha}_N(s_i) &= \frac{\alpha_N(s_i) }{\sum_i{\alpha_N(s_i) }} \\
+                        &= \frac{\alpha_N(s_i)}{P(Y_0^N)}
+\end{aligned}
+$$
+
+So that the recursion becomes:
+
+$$
+\begin{aligned}
+    \hat{\alpha}_{n + 1}(s_j) &= \frac{\alpha_{n+1}(s_j)}{P(Y_0^{n+1})} \\
+                              &= \frac{1}{P(Y_0^{n+1})} b_j( Y_{n + 1} )  \sum_i {[A_{ij} \alpha_n (s_i) ]} \\
+                              &= \frac{1}{P(Y_0^{n+1})} b_j( Y_{n + 1} )  \sum_i {[A_{ij} \frac{\alpha_n (s_i)}{P(Y_0^{n})} P(Y_0^n)  ]} \\
+                              &= \frac{P(Y_0^n)}{P(Y_0^{n+1})} b_j( Y_{n + 1} )  \sum_i {[A_{ij} \hat{\alpha}_n (s_i)  ]} 
+\end{aligned}
+$$
+
+To avoid storage of $P(Y_0^n)$ directly, define:
+
+$$
+\begin{aligned}
+    c_n &= \frac{ P(Y_0^n) } {P(Y_0^{n-1})} \\
+    \hat{\alpha}_{n + 1}(s_j) &= \frac{1}{c_{n+1}} b_j( Y_{n + 1} )  \sum_i {[A_{ij} \hat{\alpha}_n (s_i)  ]} 
+\end{aligned}
+$$
+
+In practice, we calculate the $c_{n+1} \hat{\alpha}_{n + 1}(s_i)$ firstly as (See "`def _iter_cNalpha()`"):
+$$
+c_{n+1} \hat{\alpha}_{n + 1}(s_j) = b_j( Y_{n + 1} )  \sum_i {[A_{ij} \hat{\alpha}_n (s_i)  ]}
+$$
+
+and then separate the $\hat{\alpha}_{n + 1}(s_i)$ with:
+$$
+\begin{aligned}
+    c_{n+1} &= \sum_j{c_{n+1} \hat{\alpha}_{n + 1}(s_j)} \\
+    \hat{\alpha}_{n + 1}(s_j) &= \frac{c_{n+1} \hat{\alpha}_{n + 1}(s_j)} {c_{n+1}}
+\end{aligned}
+$$
+
+
+
+#### Initial condition
+$$
+\begin{aligned}
+    \hat{\alpha}_0(s_i) &= \frac{P(Y_0^0,x_0 = s_i )}{P(Y_0^0)} \\
+                        &= \frac{b_i( Y_0 ) \mu(s_i)}{\nu(Y_0)} \\
+                    c_0 &= P(Y_0^0) = \nu(Y_0) \\
+    c_0 \hat{\alpha}_0(s_i) &= b_i( Y_0 ) \mu(s_i)
+\end{aligned}
+$$
+
+In order to recover $P(Y_0^n)$, do:
+
+$$
+\begin{aligned}
+    P(Y_0^N) &= P(Y_0^0) \prod_{n=1}^N { \frac{ P(Y_0^n) }{P(Y_0^{n-1})} } \\ 
+             &= c_0 \prod_{n=1}^N {c_n} \\
+             &= \prod_{n=0}^N{c_n} \\
+    \ln{P(Y_0^N)}  &= \sum_{n=0}^N{\ln{c_n}}
+\end{aligned}
+$$
+
+
+
+
+
+### Question 6: Backward algorithm and Baum-Welch MLE \label{note:backward-BW}
+Baum-Welch algorithm is an expectectation-maximization routine that iterates between:
+1. Expectation: 
+Finding the form of log-likelihood of the observation using current estimate of model parameter
+2. Maximization:
+Update the model parameter with the parameter set that maximises this log-likelihood function.
+
+Here we will set the algorithm to terminate once the loglikelihood does not change significantly anymore.
+
+$$
+L = \log{P(Y_0^N \given  model)} \\
+\Delta L < threshold
+$$
+
+Although BW is an EM algorithm, its E-M steps are not completely separated from each other. In practice, BW provides a MLE for the model parameter, which is directly dervied from the current estimate of model parameter, which can be iteratively substituted until convergence. Recall the model is defined by $(\mu(s_i),A_{ij},b_{s_i}(v_n))$, the BW-MLE takes the form:
+
+$$
+\begin{aligned}
+    \hat{\mu}(s_i)    &=  \gamma_0(s_i) \\
+    \hat{A}_{ij}      &= \frac{E( n_{ij} \given Y ) }{ E( n_i \given Y ) } \\
+    \hat{b}_{s_i}(Y = v_k) &= \frac{ \sum_{ \{n:\ Y_n = v_k \} }{\gamma_n(s_i)} }{ \sum_n{\gamma_n(s_i)} }
+\end{aligned}
+$$
+
+where $n_{ij}$ is the random variable denoting the number of $i\rightarrow j$ transition in a hidden state chain, with their conitional expectation being:
+
+$$
+\begin{aligned}
+    E(n_{ij} \given Y ) &= \sum_{m=0}^{N-1}{P(X_m = s_i, X_{m+1} = s_j \given Y_0^N )} \\
+                        &= \sum_{m=0}^{N-1}{\xi_m(s_i,s_j)} \\
+\end{aligned}
+$$
+
+
+
+And $\gamma_m(s_i)$ is essentially $\xi_m(s_i,s_j)$ marginalised over the $s_j$, which reads:
+$$
+\gamma_m(s_i) = \sum_j{\xi_m(s_i,s_j)}
+$$
+
+In practice, $\xi_m(s_i,s_j)$ is obtained by combining forward and backward variables, $\alpha_m(s_i)$ and $\beta_m(s_j)$ respectively (deduction ignored):
+$$
+\begin{aligned}
+    \xi_m(s_i,s_j)     &=  \frac{ \alpha_m(s_i)  \cdot  \beta_{m+1}(s_j)  \cdot  b_j(Y_{m+1})  \cdot  A_{ij}}{  \sum_i{\alpha_m(s_i)  \cdot \beta(s_i)}  }  \\
+                       &=  \frac{ \alpha_m(s_i)  \cdot  \beta_{m+1}(s_j)  \cdot  b_j(Y_{m+1})  \cdot  A_{ij}}{   P(Y_0^N)  } 
+\end{aligned}
+$$
+
+With the foward and backward variables being:
+
+$$
+\begin{aligned}
+    \alpha_m(s_i) &= P(Y_0^m,x_m = s_i ) \\
+    \beta_m(s_i)  &= P(Y_{m+1}^N,x_m = s_i ) \\
+\end{aligned}
+$$
+
+Because recursion for $\alpha_m(s_i)$ is already introduced, here I focus on the recursion for $\beta_m(s_i)$
+
+$$
+\beta_m(s_i) = \sum_j { \beta_{m+1} (s_j) \ b_j(Y_{m+1}) \  A_{ij} } \\
+$$
+
+initialised at $m=N$ with:
+$$
+\beta_N(s_i) = 1
+$$
+
+To avoid underflow, $\beta_m(s_i) = 1$ is normalised to $\sum_i \hat{\beta}_m(s_i) = 1$, which means
+$$
+\begin{aligned}
+    \hat{\beta}_m(s_i) &= \frac{ \beta_m(s_i) }{ \sum_i{\beta_m(s_i)} }  \\
+                       &= \frac{ \beta_m(s_i) }{ P(Y_{m+1}^N)}  \\
+\end{aligned}
+$$
+
+
+The recursion then becomes
+$$
+P(Y_{m+1}^N) \hat{\beta}_m(s_i) = \sum_j{ P(Y_{m+2}^N) \hat{\beta}_{m+1}(s_j)b_j( Y_{m+1} ) A_{ij} } \\
+\frac{P(Y_{m+1}^N)}{  P(Y_{m+2}^N) } \hat{\beta}_m(s_i) = \sum_j{ \hat{\beta}_{m+1}(s_j)b_j( Y_{m+1} ) A_{ij} } \\
+d_m \hat{\beta}_m(s_i) = \sum_j{ \hat{\beta}_{m+1}(s_j)b_j( Y_{m+1} ) A_{ij} } \\
+d_m = \frac{P(Y_{m+1}^N)}{  P(Y_{m+2}^N) } \\
+d_m \frac{P(Y_{0}^{m})}{ P(Y_{0}^{m+1}) }= \frac{P(Y_{m+1}^N)}{ P(Y_{m+2}^N) }\frac{P(Y_{0}^{m})}{ P(Y_{0}^{m+1}) } \\
+d_m \frac{ 1 }{ c_{m+1} }= 1
+$$
+
+So that we can take advantage of the stored $c_{m+1}$ with:
+$$
+c_{m+1} \hat{\beta}_m(s_i) = \sum_j{ \hat{\beta}_{m+1}(s_j)b_j( Y_{m+1} ) A_{ij} }
+$$
+
+Intialised with:
+$$
+\hat{\beta}_N(s_i) =  \frac{1}{ \sum_i{1} }
+$$
+
+#### Implementing BW-MLE
+Recall $\xi_m(s_i,s_j)$ is obtained by combining forward and backward variables, $\alpha_m(s_i)$ and $\beta_m(s_j)$ respectively. In practice, this is done in log-space:
+$$
+\begin{aligned}
+    \xi_m(s_i,s_j)     &=  \frac{ \alpha_m(s_i)  \cdot  \beta_{m+1}(s_j)  \cdot  b_j(Y_{m+1})  \cdot  A_{ij}}{  \sum_i{\alpha_m(s_i)  \cdot \beta_m(s_i)}  }  \\
+    \log{\xi_m(s_i,s_j)}                   &=  {\log{\alpha_m(s_i)}  + \log{\beta_{m+1}(s_j)} + \log{[ b_j(Y_{m+1})  \cdot  A_{ij} ]} } -\log{   P(Y_0^N)  } 
+\end{aligned}
+$$
+
+$$
+{\log{\alpha_m(s_i)}  + \log{\beta_{m+1}(s_j)} + \log{[ b_j(Y_{m+1})  \cdot  A_{ij} ]} } -\log{   P(Y_0^N)  } 
+$$
+
+
+$$
+\begin{aligned}
+    \hat{\mu}(s_i)    &=  \gamma_0(s_i) \\
+    \hat{A}_{ij}      &= \frac{E( n_{ij} \given Y ) }{ E( n_i \given Y ) } \\
+    \hat{b}_{s_i}(Y = v_k) &= \frac{ \sum_{ \{n:\ Y_n = v_k \} }{\gamma_n(s_i)} }{ \sum_n{\gamma_n(s_i)} }
+\end{aligned}
+$$
+
+where $n_{ij}$ is the random variable denoting the number of $i\rightarrow j$ transition in a hidden state chain, with their conitional expectation being:
+
+$$
+\begin{aligned}
+    E(n_{ij} \given Y ) &= \sum_{m=0}^{N-1}{P(X_m = s_i, X_{m+1} = s_j \given Y_0^N )} \\
+                        &= \sum_{m=0}^{N-1}{\xi_m(s_i,s_j)} \\
+\end{aligned}
+$$
+
+Which is futher maginalised to give
+$$
+E(n_{i} \given Y ) = \sum_{j=1}^J[ \sum_{m=0}^{N-1}{\xi_m(s_i,s_j)}]
+$$
+
+And $\gamma_m(s_i)$ is essentially $\xi_m(s_i,s_j)$ marginalised over the $s_j$, which reads:
+$$
+\gamma_m(s_i) = \sum_j{\xi_m(s_i,s_j)}
+$$
+
+which means some computation can be saved by exploiting
+$$
+\begin{aligned}
+E(n_{i} \given Y ) &= \sum_{j=1}^J[ \sum_{m=0}^{N-1}{\xi_m(s_i,s_j)}]\\
+                   &= \sum_{m=0}^{N-1}[ \sum_{j=1}^{J}{\xi_m(s_i,s_j)}]\\
+                   &= \sum_{m=0}^{N-1}{\gamma_m(s_i)}
+\end{aligned}
+$$
+
+
+### Question 7: Viterbi algorithm \label{note:viterbi}
+
+Although Baum-Welch algorithm can be applied to refine the model iteratively, it is impossible to infer the maximally likely hidden-state sequence using the temporary variables invovled, because the interwined dependency precluded simple combination of individual maximally likely hidden states. Luckily Viterbi algorithm offers an alternative MLE to infer hidden sequence given emission sequence, namely finding:
+
+$$
+\hat{X_0^N} = \underset{X_0^N}{\argmax}[ P(X_0^N \given Y_0^N , \{ \mu(s_i),A_{ij},b_{s_i}(v_n)  \}  ) ]
+$$
+
+But notice $P(Y_0^N \given \{ \mu(s_i),A_{ij},b_{s_i}(v_n)  \}  )$ is a constant, which means we only need to focus on 
+$$
+\hat{X_0^N} = \underset{X_0^N}{\argmax}[ P(X_0^N , Y_0^N  ) ]
+$$
+
+
+Although it is hard to write down the direct formulation for a such sequence, helper variables $\delta$ and $\psi$ (traceback varaiable) may be defined to simplify the case and to construct the recursion:
+
+$$
+\begin{aligned}
+\delta_n(s_i) &= \max_{X_0^{n-1}} P(Y_0^n, X_0^n) \\
+              &= \max_{X_0^{n-1}} P(Y_0^n, X_0^{n-1},X_n = s_i) \\
+\end{aligned}
+$$
+
+Note for $n = N$ this is we can simply take another $\max$ to obtain the log-likelihood
+$$
+\begin{aligned}
+\delta_N(s_i) &= \max_{X_0^{N-1}} P(Y_0^N, X_0^N) \\
+\max_{X_N}\delta_N(s_i) &= \max_{X_N}\max_{X_0^{N-1
+}} P(Y_0^N, X_0^N) \\
+\max_{X_N}\delta_N(s_i) &= \max_{X_0^{N}} P(Y_0^N, X_0^N) \\
+\end{aligned}
+$$
+
+#### Recursion for $\delta_n$ (deduction omitted) :
+
+Note 
+$$
+\begin{aligned}
+    \delta_{n+1}(s_j) &= \max_{X_0^{n-1},X_n}b_j(Y_{n+1})A_{ij}\delta_{n}(s_i) \\
+                      &= b_j(Y_{n+1}) \max_{X_n = s_i}A_{ij}\delta_{n}(s_i)
+\end{aligned}
+$$
+
+
+#### Numerical underflow
+In practice, we store $\phi_n(s_i) = \log{\delta_n(s_i)}$ to avoid numerical underflow. The recursion then becomes
+
+$$
+\begin{aligned}
+    \exp(\phi_{n+1}(s_j)) &= \max_{X_0^{n-1},X_n}b_j(Y_{n+1})A_{ij} \exp( \phi_{n}(s_i) ) \\
+      \phi_{n+1}(s_j)     &= \log[b_j(Y_{n+1})] + \max_{X_n = s_i} [\log[A_{ij}] + \phi_{n}(s_i)]
+\end{aligned}
+$$
+
+
+
+#### Initialisation
+At $n=0$, we have:
+$$
+\begin{aligned}
+    \phi_0(s_i) &= \log[max_{\emptyset}P(Y^0_0,X^0_0)]  \\ 
+                &= \log[P(Y_0,X_0 = s_i)] \\
+                &= \log[\mu(s_i) b_{i}(Y_0)]
+\end{aligned}
+$$
+
+#### Traceback
+While doing $\phi_n(s_i) \rightarrow \phi_{n+1}(s_j)$ will indicate the likelihood, we still need to find the maximally likely path using this information. This is done by storing the "$\argmax$" result for all "$\max$" operator consumed. For example, in:
+$$
+\phi_{n+1}(s_j)     = \log[b_j(Y_{n+1})] + \max_{X_n = s_i} [\log[A_{ij}] + \phi_{n}(s_i)]
+$$
+The argmax will be stored as a traceback pointer $\psi_{n+1}(s_j)\rightarrow ( X_n = s_i)$ :
+$$
+\psi_{n+1}(s_j) = \underset{{X_{n} = s_i}}{\argmax} [\log[A_{ij}] + \phi_{n}(s_i)]
+$$
+
+We can then recover the MLE $\hat{X_0^N} = \{X_0^*,X_1^*,...,X_N^*\}$, with the traceback recursion
+$$
+{X_{n-1}^*} = \psi_n(X_n^*)
+$$
+Initialised with
+$$
+X_N^* = \underset{ X_N = s_i }{\argmax} \phi_N(s_i)
+$$
+and can be rationalised by seeing its relation with maximum likelihood
+$$
+\begin{aligned}
+\phi_N(X_N^*) &= \max_{ X_N = s_i}  \phi_N(s_i) \\ 
+              &= \max_{X_0^{N}} \log P(Y_0^N, X_0^N) 
+\end{aligned}
+$$
+
+
+
+## Code
+
+```{bash, eval = F}
+tar -cvzf GSA_fg368.tar.gz src/
+```
+
+### Filename:"`r fname = 'test__mle_chain2transition.py';fname`" \label{test__mle_chain2transition.py}
+
+```{r, engine = 'python', code = readLines(fname)}
+#```{python, code = readLines(fname)}
+### Blank
+```
+
+### Filename:"`r fname = 'test__sampling.py';fname`" \label{test__sampling.py}
+```{r, engine = 'python', code = readLines(fname),eval = F}
+#```{python, code = readLines(fname)}
+### Blank
+```
+
+### Filename:"`r fname = 'test__forward.py';fname`" \label{test__forward.py}
+
+```{python , code=read_wrap(fname),eval = F}
+### Blank
+```
+
+
+### Filename:"`r fname = 'Q5_clean.py';fname`" \label{Q5_clean.py}
+
+```{python, code = read_wrap(fname),eval = F,results='hide'}
+### Blank
+```
+
+### Filename:"`r fname = 'Q6.py';fname`" \label{Q6.py}
+
+```{python, code = read_wrap(fname),eval = F,results='hide'}
+### Blank
+```
+
+### Filename:"`r fname = 'Q7.py';fname`"  \label{Q7.py}
+
+```{python, code = read_wrap(fname),eval = F,echo = T,results='hide'}
+### Blank
+```
